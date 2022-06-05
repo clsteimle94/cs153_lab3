@@ -1,0 +1,156 @@
+diff --git a/.gitignore b/.gitignore
+new file mode 100644
+index 0000000..3e2c9de
+--- /dev/null
++++ b/.gitignore
+@@ -0,0 +1,16 @@
++*~
++_*
++*.o
++*.d
++*.asm
++*.sym
++*.img
++vectors.S
++bootblock
++entryother
++initcode
++initcode.out
++kernel
++kernelmemfs
++mkfs
++.gdbinit
+diff --git a/Makefile b/Makefile
+index 2d2b9e4..ce40431 100644
+--- a/Makefile
++++ b/Makefile
+@@ -177,6 +177,7 @@ UPROGS=\
+ 	_zombie\
+ 	_shm_cnt\
+ 	_null\
++	_lab3test1\
+ 
+ fs.img: mkfs README $(UPROGS)
+ 	./mkfs fs.img README $(UPROGS)
+diff --git a/exec.c b/exec.c
+index b40134f..4a67f88 100644
+--- a/exec.c
++++ b/exec.c
+@@ -63,10 +63,10 @@ exec(char *path, char **argv)
+   // Allocate two pages at the next page boundary.
+   // Make the first inaccessible.  Use the second as the user stack.
+   sz = PGROUNDUP(sz);
+-  if((sz = allocuvm(pgdir, sz, sz + 2*PGSIZE)) == 0)
++  if((sp = allocuvm(pgdir, KERNBASE - 2*PGSIZE, KERNBASE)) == 0)
+     goto bad;
+-  clearpteu(pgdir, (char*)(sz - 2*PGSIZE));
+-  sp = sz;
++  clearpteu(pgdir, (char*)(KERNBASE - 2*PGSIZE));
++
+ 
+   // Push argument strings, prepare rest of stack in ustack.
+   for(argc = 0; argv[argc]; argc++) {
+diff --git a/lab3test1.c b/lab3test1.c
+new file mode 100644
+index 0000000..6a3d0dd
+--- /dev/null
++++ b/lab3test1.c
+@@ -0,0 +1,9 @@
++#include "types.h"
++#include "stat.h"
++#include "user.h"
++
++int main(int argc, char* argv[]){
++    int v = argc;
++    printf(1,"%p\n", &v);
++    exit();
++}
+diff --git a/syscall.c b/syscall.c
+index 94ef3c9..91190c9 100644
+--- a/syscall.c
++++ b/syscall.c
+@@ -17,10 +17,10 @@
+ int
+ fetchint(uint addr, int *ip)
+ {
+-  struct proc *curproc = myproc();
++  //struct proc *curproc = myproc();
+ 
+-  if(addr >= curproc->sz || addr+4 > curproc->sz)
+-    return -1;
++  //if(addr >= curproc->sz || addr+4 > curproc->sz)
++  //  return -1;
+   *ip = *(int*)(addr);
+   return 0;
+ }
+@@ -34,8 +34,8 @@ fetchstr(uint addr, char **pp)
+   char *s, *ep;
+   struct proc *curproc = myproc();
+ 
+-  if(addr >= curproc->sz)
+-    return -1;
++  //if(addr >= curproc->sz)
++  //  return -1;
+   *pp = (char*)addr;
+   ep = (char*)curproc->sz;
+   for(s = *pp; s < ep; s++){
+@@ -59,12 +59,12 @@ int
+ argptr(int n, char **pp, int size)
+ {
+   int i;
+-  struct proc *curproc = myproc();
++  //struct proc *curproc = myproc();
+  
+   if(argint(n, &i) < 0)
+     return -1;
+-  if(size < 0 || (uint)i >= curproc->sz || (uint)i+size > curproc->sz)
+-    return -1;
++  //if(size < 0 || (uint)i >= curproc->sz || (uint)i+size > curproc->sz)
++  //  return -1;
+   *pp = (char*)i;
+   return 0;
+ }
+diff --git a/vm.c b/vm.c
+index f623aa3..98d5289 100644
+--- a/vm.c
++++ b/vm.c
+@@ -224,7 +224,7 @@ allocuvm(pde_t *pgdir, uint oldsz, uint newsz)
+   char *mem;
+   uint a;
+ 
+-  if(newsz >= KERNBASE)
++  if(newsz > KERNBASE)
+     return 0;
+   if(newsz < oldsz)
+     return oldsz;
+@@ -322,6 +322,7 @@ copyuvm(pde_t *pgdir, uint sz)
+ 
+   if((d = setupkvm()) == 0)
+     return 0;
++  // Heap
+   for(i = 0; i < sz; i += PGSIZE){
+     if((pte = walkpgdir(pgdir, (void *) i, 0)) == 0)
+       panic("copyuvm: pte should exist");
+@@ -335,6 +336,22 @@ copyuvm(pde_t *pgdir, uint sz)
+     if(mappages(d, (void*)i, PGSIZE, V2P(mem), flags) < 0)
+       goto bad;
+   }
++
++  // Stack
++  for(i = KERNBASE - 2*PGSIZE; i < KERNBASE; i += PGSIZE){
++    if((pte = walkpgdir(pgdir, (void *) i, 0)) == 0)
++      panic("copyuvm: pte should exist");
++    if(!(*pte & PTE_P))
++      panic("copyuvm: page not present");
++    pa = PTE_ADDR(*pte);
++    flags = PTE_FLAGS(*pte);
++    if((mem = kalloc()) == 0)
++      goto bad;
++    memmove(mem, (char*)P2V(pa), PGSIZE);
++    if(mappages(d, (void*)i, PGSIZE, V2P(mem), flags) < 0)
++      goto bad;
++  }
++
+   return d;
+ 
+ bad:
